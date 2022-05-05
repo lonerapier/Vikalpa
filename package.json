@@ -12,7 +12,8 @@
         "url": "git+https://github.com/abigger87/femplate.git"
     },
     "devDependencies": {
-        "prettier": "^2.3.1",
+        "husky": "^7.0.0",
+        "prettier": "^2.6.2",
         "prettier-plugin-solidity": "^1.0.0-beta.13"
     },
     "scripts": {

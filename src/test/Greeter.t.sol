@@ -23,7 +23,7 @@ contract GreeterTest is Test {
     // Or at https://github.com/foundry-rs/forge-std
     function testSetGm() public {
         greeter.setGm("gm gm");
-        
+
         // Expect the GMEverybodyGM event to be fired
         vm.expectEmit(true, true, true, true);
         emit GMEverybodyGM();
@@ -34,7 +34,10 @@ contract GreeterTest is Test {
         greeter.gm("gm");
 
         // We can read slots directly
-        uint256 slot = stdstore.target(address(greeter)).sig(greeter.owner.selector).find();
+        uint256 slot = stdstore
+            .target(address(greeter))
+            .sig(greeter.owner.selector)
+            .find();
         assertEq(slot, 1);
         bytes32 owner = vm.load(address(greeter), bytes32(slot));
         assertEq(address(this), address(uint160(uint256(owner))));
