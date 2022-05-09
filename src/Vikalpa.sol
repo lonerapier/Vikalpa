@@ -2,9 +2,10 @@
 pragma solidity >=0.8.13;
 
 import {ERC20} from "@solmate/tokens/ERC20.sol";
-import {ERC1155} from "@solmate/tokens/ERC1155.sol";
-import {SafeTransferLib} from "@solmate/utis/SafeTransferLib.sol";
+// import {ERC1155} from "@solmate/tokens/ERC1155.sol";
+import {SafeTransferLib} from "@solmate/utils/SafeTransferLib.sol";
 
+import {ERC1155} from "./interfaces/ERC1155.sol";
 import {IVikalpa} from "./interfaces/IVikalpa.sol";
 
 contract Vikalpa is ERC1155, IVikalpa {
@@ -13,23 +14,46 @@ contract Vikalpa is ERC1155, IVikalpa {
     mapping(uint256 => Type) internal _tokenType;
     mapping(bytes32 => uint256) internal _hashToOptionType;
 
-    mapping(uint256 => Option) public options;
-    mapping(uint256 => Position) public positions;
+    mapping(uint256 => Option) internal options;
+    mapping(uint256 => Position) internal positions;
 
     mapping(uint256 => uint256[]) public unboughtPositionByOptions;
     mapping(address => uint256[]) public unexercisedPositionsByAccount;
 
+    function uri(uint256) public pure override returns (string memory) {
+        return "";
+    }
+
+    function getOption(uint256 _optionId) public view returns (Option memory) {
+        return options[_optionId];
+    }
+
+    function getPosition(uint256 _positionId)
+        public
+        view
+        returns (Position memory)
+    {
+        return positions[_positionId];
+    }
+
     function newOption(Option memory _option) external returns (uint256) {
-        bytes32 optionKey = uint256(keccak256(abi.encode(_option)));
+        bytes32 optionKey = keccak256(abi.encode(_option));
         if (_hashToOptionType[optionKey] != 0) revert OptionExists(optionKey);
 
         if (_option.expiryTimestamp < block.timestamp + 1 days)
             revert ExpiredOption();
 
-        if (underlyingAsset == exerciseAsset) revert InvalidAssets();
+        if (_option.underlyingAsset == _option.exerciseAsset)
+            revert InvalidAssets(
+                _option.underlyingAsset,
+                _option.exerciseAsset
+            );
 
-        if (expiryTimestamp < exerciseTimestamp + 1 days)
-            revert ExerciseWindowTooShort();
+        if (_option.expiryTimestamp < _option.exerciseTimestamp + 1 days)
+            revert ExerciseWindowTooShort(
+                _option.exerciseTimestamp,
+                _option.expiryTimestamp
+            );
 
         if (
             ERC20(_option.underlyingAsset).totalSupply() <
@@ -45,13 +69,13 @@ contract Vikalpa is ERC1155, IVikalpa {
 
         emit NewOptionCreated(
             _nextId,
-            _option.optionType,
             _option.underlyingAsset,
             _option.exerciseAsset,
+            _option.optionType,
             _option.underlyingAmount,
             _option.exerciseAmount,
             _option.expiryTimestamp,
-            _option.excerciseTimestamp
+            _option.exerciseTimestamp
         );
 
         return _nextId++;
@@ -66,8 +90,7 @@ contract Vikalpa is ERC1155, IVikalpa {
 
         Option storage option = options[_optionId];
 
-        if (option.expiryTimestamp < block.timestamp)
-            revert ExpiredOption(_optionId, option.expiryTimestamp);
+        if (option.expiryTimestamp < block.timestamp) revert ExpiredOption();
 
         if (option.optionType) {
             // Call Position
@@ -126,13 +149,13 @@ contract Vikalpa is ERC1155, IVikalpa {
         uint256 _optionId,
         uint80 _amount,
         uint160 _randomSeed
-    ) private {
+    ) private returns (uint80 amountCurrentlyBought) {
         uint256 positionLen = unboughtPositionByOptions[_optionId].length;
-        if (positionLen == 0) revert NoOptions();
+        if (positionLen == 0) revert NoOption();
 
         Position storage position;
         uint256 curIndex;
-        uint256 amountCurrentlyBought;
+        uint256 positionId;
         uint256 i;
 
         while (_amount > 0) {
@@ -142,11 +165,10 @@ contract Vikalpa is ERC1155, IVikalpa {
                 curIndex = _randomSeed % positionLen;
             }
 
-            position = positions[
-                unboughtPositionByOptions[_optionId][curIndex]
-            ];
+            positionId = unboughtPositionByOptions[_optionId][curIndex];
+            position = positions[positionId];
 
-            uint256 amountAvailable = position.amountWritten -
+            uint80 amountAvailable = position.amountWritten -
                 position.amountBought;
 
             if (_amount > amountAvailable) {
@@ -180,19 +202,24 @@ contract Vikalpa is ERC1155, IVikalpa {
                 amountCurrentlyBought
             );
 
+            bytes memory data = new bytes(0);
+
             // transfer option NFT to buyer
             safeTransferFrom(
                 position.writer,
                 msg.sender,
                 _optionId,
-                amountCurrentlyBought
+                amountCurrentlyBought,
+                data
             );
 
-            position.randomSeed = uint256(keccak256(abi.encode(randomSeed, i)));
+            _randomSeed = uint160(
+                uint256(keccak256(abi.encode(_randomSeed, i)))
+            );
             ++i;
         }
 
-        options[_optionId].randomSeed = randomSeed;
+        options[_optionId].randomSeed = _randomSeed;
 
         return amountCurrentlyBought;
     }
@@ -203,14 +230,15 @@ contract Vikalpa is ERC1155, IVikalpa {
 
         Option storage option = options[_optionId];
 
-        if (option.expiryTimestamp < block.timestamp)
-            revert ExpiredOption(_optionId, option.expiryTimestamp);
+        if (option.expiryTimestamp < block.timestamp) revert ExpiredOption();
 
-        uint256 _optionAmount = _buyFrom(_optionId, _amount, option.randomSeed);
+        uint256 _optionAmount = uint256(
+            _buyFrom(_optionId, _amount, option.randomSeed)
+        );
 
         // transfer option premium from buyer
         SafeTransferLib.safeTransferFrom(
-            ERC20(option.exerciseAmount),
+            ERC20(option.exerciseAsset),
             msg.sender,
             address(this),
             _optionAmount * option.premium
@@ -223,16 +251,15 @@ contract Vikalpa is ERC1155, IVikalpa {
         if (_tokenType[_optionId] != Type.Option)
             revert InvalidToken(_optionId);
 
-        if (balanceOf(msg.sender, _optionId) < _amount)
+        if (balanceOf[msg.sender][_optionId] < uint80(_amount))
             revert NotEnoughBalance(msg.sender, _optionId);
 
         Option storage option = options[_optionId];
 
-        if (option.expiryTimestamp <= block.timestamp)
-            revert ExpiredOption(_optionId, option.expiryTimestamp);
+        if (option.expiryTimestamp <= block.timestamp) revert ExpiredOption();
 
-        if (option.excerciseTimestamp > block.timestamp)
-            revert EarlyExercise(_optionId, option.excerciseTimestamp);
+        if (option.exerciseTimestamp > block.timestamp)
+            revert EarlyExercise(_optionId, option.exerciseTimestamp);
 
         uint256 optionAmount = option.underlyingAmount * _amount;
         uint256 exerciseAmount = option.exerciseAmount * _amount;
@@ -243,7 +270,7 @@ contract Vikalpa is ERC1155, IVikalpa {
         uint256[] memory positionIds = unexercisedPositionsByAccount[
             msg.sender
         ];
-        uint256 amountLeft = _amount;
+        uint80 amountLeft = _amount;
         uint256 i;
 
         while (amountLeft > 0) {
@@ -300,7 +327,7 @@ contract Vikalpa is ERC1155, IVikalpa {
         if (_tokenType[_positionId] != Type.Position)
             revert InvalidToken(_positionId);
 
-        if (balanceOf(msg.sender, positionId) != 1)
+        if (balanceOf[msg.sender][_positionId] != 1)
             revert NotEnoughBalance(msg.sender, _positionId);
 
         Position storage position = positions[_positionId];
@@ -316,6 +343,14 @@ contract Vikalpa is ERC1155, IVikalpa {
             option.exerciseAmount;
         uint256 underlyingAmount = (position.amountWritten -
             position.amountExercised) * option.underlyingAmount;
+
+        // transfer option premium from buyer
+        if (position.amountBought > 0)
+            SafeTransferLib.safeTransfer(
+                ERC20(option.exerciseAsset),
+                msg.sender,
+                option.premium * position.amountBought
+            );
 
         if (option.optionType) {
             // Call Position
@@ -345,7 +380,7 @@ contract Vikalpa is ERC1155, IVikalpa {
 
         position.liquidated = true;
 
-        _burn(msg.sender, positionId, 1);
+        _burn(msg.sender, _positionId, 1);
 
         emit OptionLiquidated(msg.sender, _positionId);
     }

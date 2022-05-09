@@ -4,27 +4,54 @@ pragma solidity >=0.8.13;
 interface IVikalpa {
     error InvalidToken(uint256);
     error InvalidAmount();
-    error InvalidAssets();
+    error InvalidAssets(address, address);
     error NotEnoughBalance(address, uint256);
     error OptionExists(bytes32);
-    error ExerciseWindowTooShort();
+    error ExerciseWindowTooShort(uint32, uint32);
+    error NoOption();
     error EarlyExercise(uint256, uint112);
-    error ExpiredOption(uint256, uint112);
+    error EarlyLiquidation(uint256, uint40);
+    error ExpiredOption();
+    error AlreadyLiquidated(uint256);
 
     event NewOptionCreated(
-        uint256 optionId,
+        uint256 indexed optionId,
+        address indexed underlyingAsset,
+        address indexed exerciseAsset,
         bool optionType,
-        address underlyingAsset,
-        address exerciseAsset,
         uint256 underlyingAmount,
         uint256 exerciseAmount,
         uint256 expiryTimestamp,
         uint256 exerciseTimestamp
     );
 
-    event OptionWritten(address writer, uint256 optionId);
+    event OptionWritten(
+        address indexed writer,
+        uint256 indexed positionId,
+        uint256 indexed optionId,
+        uint256 amount
+    );
 
-    event OptionExercised(address buyer, uint256 optionId, uint112 amount);
+    event OptionExercised(
+        address indexed buyer,
+        uint256 indexed optionId,
+        uint256 amount
+    );
+
+    event OptionLiquidated(address indexed writer, uint256 indexed positionId);
+
+    event OptionBoughtFromWriter(
+        address indexed buyer,
+        address indexed writer,
+        uint256 indexed optionId,
+        uint256 amount
+    );
+
+    event OptionsBought(
+        address indexed buyer,
+        uint256 optionId,
+        uint256 amount
+    );
 
     // ERC1155 Token type
     enum Type {
@@ -48,7 +75,7 @@ interface IVikalpa {
         // expiry timestamp
         uint32 expiryTimestamp;
         // exercise timestamp
-        uint32 excerciseTimestamp;
+        uint32 exerciseTimestamp;
         // randomised seed for option buying
         uint160 randomSeed;
         // Can be of two types: Call or Put
@@ -89,19 +116,19 @@ interface IVikalpa {
     /// @param optionId id of option to be written
     /// @param amount amount of options
     /// @return positionId id of position written
-    function write(uint256 optionId, uint112 amount)
+    function write(uint256 optionId, uint80 amount)
         external
         returns (uint256 positionId);
 
     /// @notice buy options
     /// @param optionId id of option to be bought
     /// @param amount amount of options
-    function buy(uint256 optionId, uint112 amount) external;
+    function buy(uint256 optionId, uint80 amount) external;
 
     /// @notice exercise options
     /// @param optionId id of option to be exercised
     /// @param amount amount of options
-    function exercise(uint256 optionId, uint112 amount) external;
+    function exercise(uint256 optionId, uint80 amount) external;
 
     /// @notice liquidate expired position
     /// @param positionId id of position to be liquidated
