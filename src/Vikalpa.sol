@@ -125,34 +125,42 @@ contract Vikalpa is ERC1155, IVikalpa {
     // =============== PUBLIC FUNCTIONS ===============
 
     function newOption(Option memory _option) external returns (uint256) {
+        // create option hash key
         bytes32 optionKey = keccak256(abi.encode(_option));
 
+        // check if option already exists
         uint256 optionId = _hashToOptionType[optionKey];
         if (optionId != 0) return optionId;
 
+        // check for expired option
         if (_option.expiryTimestamp < block.timestamp + 1 days)
             revert ExpiredOption();
 
+        // check for invalid tokens
         if (_option.underlyingAsset == _option.exerciseAsset)
             revert InvalidAssets(
                 _option.underlyingAsset,
                 _option.exerciseAsset
             );
 
+        // expiry timestamp should be greater than exercise timestamp by at least 1 day
         if (_option.expiryTimestamp < _option.exerciseTimestamp + 1 days)
             revert ExerciseWindowTooShort(
                 _option.exerciseTimestamp,
                 _option.expiryTimestamp
             );
 
+        // check token supplies
         if (
             ERC20(_option.underlyingAsset).totalSupply() <
             _option.underlyingAmount ||
             ERC20(_option.exerciseAsset).totalSupply() < _option.exerciseAmount
         ) revert InvalidAmount();
 
+        // create option seed
         _option.randomSeed = uint160(uint256(optionKey));
 
+        // populate option type mapping
         _tokenType[_nextId] = Type.Option;
         _hashToOptionType[optionKey] = _nextId;
         options[_nextId] = _option;
@@ -168,6 +176,7 @@ contract Vikalpa is ERC1155, IVikalpa {
             _option.exerciseTimestamp
         );
 
+        // increment next id and return
         return _nextId++;
     }
 
@@ -207,6 +216,7 @@ contract Vikalpa is ERC1155, IVikalpa {
 
         positionId = _nextId;
 
+        // mint ERC1155 NFTs
         uint256[] memory tokens = new uint256[](2);
         tokens[0] = _optionId;
         tokens[1] = positionId;
@@ -215,6 +225,7 @@ contract Vikalpa is ERC1155, IVikalpa {
         amounts[0] = _amount;
         amounts[1] = 1;
 
+        // mint position NFT and create mapping
         _tokenType[_nextId] = Type.Position;
         positions[_nextId] = Position({
             optionId: _optionId,
@@ -225,10 +236,13 @@ contract Vikalpa is ERC1155, IVikalpa {
             liquidated: false
         });
 
+        // push position to unbought positions
         unboughtPositionByOptions[_optionId].push(positionId);
 
+        // increment id
         ++_nextId;
 
+        // mint nfts
         _batchMint(msg.sender, tokens, amounts, hex"");
 
         emit OptionWritten(msg.sender, positionId, _optionId, _amount);
@@ -246,7 +260,7 @@ contract Vikalpa is ERC1155, IVikalpa {
         if (option.expiryTimestamp < block.timestamp) revert ExpiredOption();
 
         uint256 _optionAmount = uint256(
-            _buyFrom(_optionId, _amount, option.randomSeed)
+            deal(_optionId, _amount, option.randomSeed)
         );
 
         // transfer option premium from buyer
@@ -270,8 +284,13 @@ contract Vikalpa is ERC1155, IVikalpa {
 
         Option storage option = options[_optionId];
 
-        if (option.expiryTimestamp <= block.timestamp) revert ExpiredOption();
+        // burns expired option NFTs
+        if (option.expiryTimestamp <= block.timestamp) {
+            _burn(msg.sender, _optionId, _amount);
+            return;
+        }
 
+        // revert if option is can't be exercised
         if (option.exerciseTimestamp > block.timestamp)
             revert EarlyExercise(_optionId, option.exerciseTimestamp);
 
@@ -408,21 +427,37 @@ contract Vikalpa is ERC1155, IVikalpa {
 
     // =============== PRIVATE FUNCTIONS ===============
 
-    function _buyFrom(
+    /// @notice buys `amount` of options from unbought positions
+    /// @param _optionId option id
+    /// @param _amount amount to buy
+    /// @param _randomSeed option seed
+    /// @return optionAmount amount of option bought
+    function deal(
         uint256 _optionId,
         uint80 _amount,
         uint160 _randomSeed
     ) private returns (uint80) {
+        // total unbought positions
         uint256 positionLen = unboughtPositionByOptions[_optionId].length;
         if (positionLen == 0) revert NoOption();
 
         Position storage position;
         uint80 amount = _amount;
+
+        // currently available options
         uint80 amountCurrentlyBought;
+
+        // current index
         uint256 curIndex;
+
+        // current position id
         uint256 positionId;
+
+        // counter to update option seed
         uint256 i;
 
+        // loop over positions and buy options available i.e.
+        // options writter - bought
         while (_amount > 0) {
             curIndex = (positionLen == 1) ? 0 : _randomSeed % positionLen;
 
