@@ -65,7 +65,9 @@ contract Vikalpa is ERC1155, IVikalpa {
 
     function newOption(Option memory _option) external returns (uint256) {
         bytes32 optionKey = keccak256(abi.encode(_option));
-        if (_hashToOptionType[optionKey] != 0) revert OptionExists(optionKey);
+
+        uint256 optionId = _hashToOptionType[optionKey];
+        if (optionId != 0) return optionId;
 
         if (_option.expiryTimestamp < block.timestamp + 1 days)
             revert ExpiredOption();
@@ -176,11 +178,13 @@ contract Vikalpa is ERC1155, IVikalpa {
         uint256 _optionId,
         uint80 _amount,
         uint160 _randomSeed
-    ) private returns (uint80 amountCurrentlyBought) {
+    ) private returns (uint80) {
         uint256 positionLen = unboughtPositionByOptions[_optionId].length;
         if (positionLen == 0) revert NoOption();
 
         Position storage position;
+        uint80 amount = _amount;
+        uint80 amountCurrentlyBought;
         uint256 curIndex;
         uint256 positionId;
         uint256 i;
@@ -221,6 +225,7 @@ contract Vikalpa is ERC1155, IVikalpa {
             emit OptionBoughtFromWriter(
                 msg.sender,
                 position.writer,
+                positionId,
                 position.optionId,
                 amountCurrentlyBought
             );
@@ -242,7 +247,7 @@ contract Vikalpa is ERC1155, IVikalpa {
 
         options[_optionId].randomSeed = _randomSeed;
 
-        return amountCurrentlyBought;
+        return amount - _amount;
     }
 
     function buy(uint256 _optionId, uint80 _amount) external {
@@ -251,7 +256,6 @@ contract Vikalpa is ERC1155, IVikalpa {
 
         Option storage option = options[_optionId];
 
-        if (msg.sender == option.writer) revert SelfBuy();
         if (option.expiryTimestamp < block.timestamp) revert ExpiredOption();
 
         uint256 _optionAmount = uint256(
