@@ -6,13 +6,14 @@ interface IVikalpa {
     error InvalidAmount();
     error InvalidAssets(address, address);
     error NotEnoughBalance(address, uint256);
-    error OptionExists(bytes32);
-    error ExerciseWindowTooShort(uint32, uint32);
     error NoOption();
-    error EarlyExercise(uint256, uint112);
-    error EarlyLiquidation(uint256, uint40);
+    error OptionExists(bytes32);
     error ExpiredOption();
+    error EarlyExercise(uint256, uint112);
+    error ExerciseWindowTooShort(uint32, uint32);
+    error EarlyLiquidation(uint256, uint40);
     error AlreadyLiquidated(uint256);
+    error SelfBuy();
 
     event NewOptionCreated(
         uint256 indexed optionId,

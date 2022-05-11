@@ -186,11 +186,7 @@ contract Vikalpa is ERC1155, IVikalpa {
         uint256 i;
 
         while (_amount > 0) {
-            if (positionLen == 1) {
-                curIndex = 0;
-            } else {
-                curIndex = _randomSeed % positionLen;
-            }
+            curIndex = (positionLen == 1) ? 0 : _randomSeed % positionLen;
 
             positionId = unboughtPositionByOptions[_optionId][curIndex];
             position = positions[positionId];
@@ -201,20 +197,20 @@ contract Vikalpa is ERC1155, IVikalpa {
             if (_amount > amountAvailable) {
                 _amount -= amountAvailable;
                 amountCurrentlyBought = amountAvailable;
+
+                uint256 newLen = positionLen - 1;
+                if (newLen != 0) {
+                    unboughtPositionByOptions[_optionId][
+                        curIndex
+                    ] = unboughtPositionByOptions[_optionId][newLen];
+                    unboughtPositionByOptions[_optionId].pop();
+                    positionLen = newLen;
+                } else {
+                    unboughtPositionByOptions[_optionId].pop();
+                }
             } else {
                 amountCurrentlyBought = _amount;
                 _amount = 0;
-            }
-
-            uint256 newLen = positionLen - 1;
-            if (newLen != 0) {
-                unboughtPositionByOptions[_optionId][
-                    curIndex
-                ] = unboughtPositionByOptions[_optionId][newLen];
-                unboughtPositionByOptions[_optionId].pop();
-                positionLen = newLen;
-            } else {
-                unboughtPositionByOptions[_optionId].pop();
             }
 
             // update bought amount in position
@@ -229,15 +225,13 @@ contract Vikalpa is ERC1155, IVikalpa {
                 amountCurrentlyBought
             );
 
-            bytes memory data = new bytes(0);
-
             // transfer option NFT to buyer
             safeTransferFrom(
                 position.writer,
                 msg.sender,
                 _optionId,
                 amountCurrentlyBought,
-                data
+                hex""
             );
 
             _randomSeed = uint160(
@@ -257,6 +251,7 @@ contract Vikalpa is ERC1155, IVikalpa {
 
         Option storage option = options[_optionId];
 
+        if (msg.sender == option.writer) revert SelfBuy();
         if (option.expiryTimestamp < block.timestamp) revert ExpiredOption();
 
         uint256 _optionAmount = uint256(
