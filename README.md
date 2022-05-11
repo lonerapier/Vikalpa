@@ -64,6 +64,11 @@ Though, this structure is prone to volatile asset price changes but is easier to
 -   `exercise`: buyer exercises options after `exerciseTimestamp`
 -   `liquidate`: writer redeems unbought positions and premium for bought options
 
+### TODO
+
+-   Fee implementation
+-   Gas optimizations
+
 ## Tests
 
 Check [SETUP.md](SETUP.md) for seeting up repository and running tests.
