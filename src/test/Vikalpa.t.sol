@@ -620,7 +620,7 @@ contract TestVikalpa is Test, ERC1155TokenReceiver {
 
     function testExerciseMultiple() public {
         (uint256 optionId, uint256 positionId) = setUpBuyCallOption(100);
-        (uint256 optionId2, uint256 positionId2) = setUpBuyCallOption(100);
+        (, uint256 positionId2) = setUpBuyCallOption(100);
 
         IVikalpa.Option memory option = vikalpa.getOption(optionId);
 
@@ -670,5 +670,76 @@ contract TestVikalpa is Test, ERC1155TokenReceiver {
         vikalpa.liquidate(positionId);
 
         IVikalpa.Position memory position = vikalpa.getPosition(positionId);
+
+        // check NFT balances
+        assertEq(vikalpa.balanceOf(address(mockUser), optionId), 100);
+
+        // check position exercise amount
+        assertEq(position.amountExercised, 0);
+        assertTrue(position.liquidated);
+
+        // check token Balances
+        assertEq(tokenA.balanceOf(address(vikalpa)), 0);
+        assertEq(tokenA.balanceOf(address(this)), tokenBalance);
+        assertEq(tokenB.balanceOf(address(vikalpa)), 0);
+        assertEq(
+            tokenB.balanceOf(address(this)),
+            tokenBalance + option.premium * 100
+        );
+    }
+
+    function testLiquidateMultiple() public {
+        (uint256 optionId, uint256 positionId) = setUpBuyCallOption(100);
+        (, uint256 positionId2) = setUpBuyCallOption(100);
+
+        IVikalpa.Option memory option = vikalpa.getOption(optionId);
+
+        vm.warp(option.expiryTimestamp + 1);
+        vikalpa.liquidate(positionId);
+        vikalpa.liquidate(positionId2);
+
+        IVikalpa.Position memory position = vikalpa.getPosition(positionId);
+
+        // check NFT balances
+        assertEq(vikalpa.balanceOf(address(mockUser), optionId), 200);
+
+        // check position exercise amount
+        assertEq(position.amountExercised, 0);
+
+        // check token Balances
+        assertEq(tokenA.balanceOf(address(vikalpa)), 0);
+        assertEq(tokenA.balanceOf(address(this)), tokenBalance);
+        assertEq(tokenB.balanceOf(address(vikalpa)), 0);
+        assertEq(
+            tokenB.balanceOf(address(this)),
+            tokenBalance + option.premium * 200
+        );
+    }
+
+    function testLiquidateExercised() public {
+        (uint256 optionId, uint256 positionId) = setUpBuyCallOption(100);
+
+        IVikalpa.Option memory option = vikalpa.getOption(optionId);
+
+        vm.warp(option.exerciseTimestamp + 1);
+        vm.prank(mockUser);
+        vikalpa.exercise(optionId, uint80(100));
+
+        vm.warp(option.expiryTimestamp + 1);
+        vikalpa.liquidate(positionId);
+
+        IVikalpa.Position memory position = vikalpa.getPosition(positionId);
+
+        // check NFT balances
+        assertEq(vikalpa.balanceOf(address(mockUser), optionId), 0);
+
+        // check position exercise amount
+        assertEq(position.amountExercised, 100);
+
+        // check token Balances
+        assertEq(
+            tokenA.balanceOf(address(mockUser)),
+            tokenBalance + option.underlyingAmount * 100
+        );
     }
 }
