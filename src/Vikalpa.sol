@@ -35,26 +35,47 @@ import {IVikalpa} from "./interfaces/IVikalpa.sol";
  *
  */
 
+/// @notice Vanilla ERC1155 Options AMM contract for covered calls or puts
+/// @dev Two types of ERC1155 tokens issued:
+///     1. Option Tokens
+///     2. Position Tokens
 contract Vikalpa is ERC1155, IVikalpa {
+    // =============== STATE VARIABLES ===============
+
+    /// @notice manages ids of tokens
     uint256 internal _nextId = 1;
 
+    /// @notice mapping of token ids to token types
     mapping(uint256 => Type) internal _tokenType;
+
+    /// @notice mapping of option hashes to option ids
     mapping(bytes32 => uint256) internal _hashToOptionType;
 
+    /// @notice mapping of option ids to options
     mapping(uint256 => Option) internal options;
+
+    /// @notice mapping of position ids to positions
     mapping(uint256 => Position) internal positions;
 
+    /// @notice mapping of option ids to unbought positions
     mapping(uint256 => uint256[]) public unboughtPositionByOptions;
+
+    /// @notice mapping of accounts to bought positions
     mapping(address => uint256[]) public unexercisedPositionsByAccount;
 
+    // =============== HELPER FUNCTIONS ===============
+
+    /// @inheritdoc ERC1155
     function uri(uint256) public pure override returns (string memory) {
         return "";
     }
 
+    /// @inheritdoc IVikalpa
     function getOption(uint256 _optionId) public view returns (Option memory) {
         return options[_optionId];
     }
 
+    /// @inheritdoc IVikalpa
     function getPosition(uint256 _positionId)
         public
         view
@@ -62,6 +83,46 @@ contract Vikalpa is ERC1155, IVikalpa {
     {
         return positions[_positionId];
     }
+
+    function getTokenInfo(uint256 _tokenId)
+        external
+        view
+        returns (Info memory info)
+    {
+        if (_tokenType[_tokenId] == Type.Option) {
+            Option storage option = options[_tokenId];
+            bool expired = (option.expiryTimestamp > block.timestamp);
+            info.optionType = option.optionType;
+            info.underlyingAsset = option.underlyingAsset;
+            info.exerciseAsset = option.exerciseAsset;
+            info.underlyingAmount = expired
+                ? uint256(0)
+                : uint256(option.underlyingAmount);
+            info.exerciseAmount = expired
+                ? uint256(0)
+                : uint256(option.exerciseAmount);
+        } else if (_tokenType[_tokenId] == Type.Position) {
+            Position storage position = positions[_tokenId];
+            Option storage option = options[position.optionId];
+            bool expired = (option.expiryTimestamp > block.timestamp);
+            info.optionType = option.optionType;
+            info.underlyingAsset = option.underlyingAsset;
+            info.exerciseAsset = option.exerciseAsset;
+            info.underlyingAmount = expired
+                ? uint256(0)
+                : uint256(
+                    option.underlyingAmount *
+                        (position.amountWritten - position.amountExercised)
+                );
+            info.exerciseAmount = expired
+                ? uint256(0)
+                : uint256(option.exerciseAmount * position.amountExercised);
+        } else {
+            revert InvalidToken(_tokenId);
+        }
+    }
+
+    // =============== PUBLIC FUNCTIONS ===============
 
     function newOption(Option memory _option) external returns (uint256) {
         bytes32 optionKey = keccak256(abi.encode(_option));
@@ -110,6 +171,7 @@ contract Vikalpa is ERC1155, IVikalpa {
         return _nextId++;
     }
 
+    /// @inheritdoc IVikalpa
     function write(uint256 _optionId, uint80 _amount)
         external
         returns (uint256 positionId)
@@ -174,82 +236,7 @@ contract Vikalpa is ERC1155, IVikalpa {
         return positionId;
     }
 
-    function _buyFrom(
-        uint256 _optionId,
-        uint80 _amount,
-        uint160 _randomSeed
-    ) private returns (uint80) {
-        uint256 positionLen = unboughtPositionByOptions[_optionId].length;
-        if (positionLen == 0) revert NoOption();
-
-        Position storage position;
-        uint80 amount = _amount;
-        uint80 amountCurrentlyBought;
-        uint256 curIndex;
-        uint256 positionId;
-        uint256 i;
-
-        while (_amount > 0) {
-            curIndex = (positionLen == 1) ? 0 : _randomSeed % positionLen;
-
-            positionId = unboughtPositionByOptions[_optionId][curIndex];
-            position = positions[positionId];
-
-            uint80 amountAvailable = position.amountWritten -
-                position.amountBought;
-
-            if (_amount > amountAvailable) {
-                _amount -= amountAvailable;
-                amountCurrentlyBought = amountAvailable;
-
-                uint256 newLen = positionLen - 1;
-                if (newLen != 0) {
-                    unboughtPositionByOptions[_optionId][
-                        curIndex
-                    ] = unboughtPositionByOptions[_optionId][newLen];
-                    unboughtPositionByOptions[_optionId].pop();
-                    positionLen = newLen;
-                } else {
-                    unboughtPositionByOptions[_optionId].pop();
-                }
-            } else {
-                amountCurrentlyBought = _amount;
-                _amount = 0;
-            }
-
-            // update bought amount in position
-            position.amountBought += amountCurrentlyBought;
-
-            unexercisedPositionsByAccount[msg.sender].push(positionId);
-
-            emit OptionBoughtFromWriter(
-                msg.sender,
-                position.writer,
-                positionId,
-                position.optionId,
-                amountCurrentlyBought
-            );
-
-            // transfer option NFT to buyer
-            safeTransferFrom(
-                position.writer,
-                msg.sender,
-                _optionId,
-                amountCurrentlyBought,
-                hex""
-            );
-
-            _randomSeed = uint160(
-                uint256(keccak256(abi.encode(_randomSeed, i)))
-            );
-            ++i;
-        }
-
-        options[_optionId].randomSeed = _randomSeed;
-
-        return amount - _amount;
-    }
-
+    /// @inheritdoc IVikalpa
     function buy(uint256 _optionId, uint80 _amount) external {
         if (_tokenType[_optionId] != Type.Option)
             revert InvalidToken(_optionId);
@@ -273,6 +260,7 @@ contract Vikalpa is ERC1155, IVikalpa {
         emit OptionsBought(msg.sender, _optionId, _amount);
     }
 
+    /// @inheritdoc	IVikalpa
     function exercise(uint256 _optionId, uint80 _amount) external {
         if (_tokenType[_optionId] != Type.Option)
             revert InvalidToken(_optionId);
@@ -302,12 +290,19 @@ contract Vikalpa is ERC1155, IVikalpa {
         while (amountLeft > 0) {
             position = positions[positionIds[i]];
 
-            if (amountLeft < position.amountBought - position.amountExercised) {
-                position.amountExercised += amountLeft;
-                amountLeft = 0;
-            } else {
-                amountLeft -= position.amountBought - position.amountExercised;
-                position.amountExercised = position.amountBought;
+            if (!position.liquidated) {
+                if (
+                    amountLeft <
+                    position.amountBought - position.amountExercised
+                ) {
+                    position.amountExercised += amountLeft;
+                    amountLeft = 0;
+                } else {
+                    amountLeft -=
+                        position.amountBought -
+                        position.amountExercised;
+                    position.amountExercised = position.amountBought;
+                }
             }
 
             ++i;
@@ -411,41 +406,81 @@ contract Vikalpa is ERC1155, IVikalpa {
         emit OptionLiquidated(msg.sender, _positionId);
     }
 
-    function getTokenInfo(uint256 _tokenId)
-        external
-        view
-        returns (Info memory info)
-    {
-        if (_tokenType[_tokenId] == Type.Option) {
-            Option storage option = options[_tokenId];
-            bool expired = (option.expiryTimestamp > block.timestamp);
-            info.optionType = option.optionType;
-            info.underlyingAsset = option.underlyingAsset;
-            info.exerciseAsset = option.exerciseAsset;
-            info.underlyingAmount = expired
-                ? uint256(0)
-                : uint256(option.underlyingAmount);
-            info.exerciseAmount = expired
-                ? uint256(0)
-                : uint256(option.exerciseAmount);
-        } else if (_tokenType[_tokenId] == Type.Position) {
-            Position storage position = positions[_tokenId];
-            Option storage option = options[position.optionId];
-            bool expired = (option.expiryTimestamp > block.timestamp);
-            info.optionType = option.optionType;
-            info.underlyingAsset = option.underlyingAsset;
-            info.exerciseAsset = option.exerciseAsset;
-            info.underlyingAmount = expired
-                ? uint256(0)
-                : uint256(
-                    option.underlyingAmount *
-                        (position.amountWritten - position.amountExercised)
-                );
-            info.exerciseAmount = expired
-                ? uint256(0)
-                : uint256(option.exerciseAmount * position.amountExercised);
-        } else {
-            revert InvalidToken(_tokenId);
+    // =============== PRIVATE FUNCTIONS ===============
+
+    function _buyFrom(
+        uint256 _optionId,
+        uint80 _amount,
+        uint160 _randomSeed
+    ) private returns (uint80) {
+        uint256 positionLen = unboughtPositionByOptions[_optionId].length;
+        if (positionLen == 0) revert NoOption();
+
+        Position storage position;
+        uint80 amount = _amount;
+        uint80 amountCurrentlyBought;
+        uint256 curIndex;
+        uint256 positionId;
+        uint256 i;
+
+        while (_amount > 0) {
+            curIndex = (positionLen == 1) ? 0 : _randomSeed % positionLen;
+
+            positionId = unboughtPositionByOptions[_optionId][curIndex];
+            position = positions[positionId];
+
+            uint80 amountAvailable = position.amountWritten -
+                position.amountBought;
+
+            if (_amount > amountAvailable) {
+                _amount -= amountAvailable;
+                amountCurrentlyBought = amountAvailable;
+
+                uint256 newLen = positionLen - 1;
+                if (newLen != 0) {
+                    unboughtPositionByOptions[_optionId][
+                        curIndex
+                    ] = unboughtPositionByOptions[_optionId][newLen];
+                    unboughtPositionByOptions[_optionId].pop();
+                    positionLen = newLen;
+                } else {
+                    unboughtPositionByOptions[_optionId].pop();
+                }
+            } else {
+                amountCurrentlyBought = _amount;
+                _amount = 0;
+            }
+
+            // update bought amount in position
+            position.amountBought += amountCurrentlyBought;
+
+            unexercisedPositionsByAccount[msg.sender].push(positionId);
+
+            emit OptionBoughtFromWriter(
+                msg.sender,
+                position.writer,
+                positionId,
+                position.optionId,
+                amountCurrentlyBought
+            );
+
+            // transfer option NFT to buyer
+            safeTransferFrom(
+                position.writer,
+                msg.sender,
+                _optionId,
+                amountCurrentlyBought,
+                hex""
+            );
+
+            _randomSeed = uint160(
+                uint256(keccak256(abi.encode(_randomSeed, i)))
+            );
+            ++i;
         }
+
+        options[_optionId].randomSeed = _randomSeed;
+
+        return amount - _amount;
     }
 }
