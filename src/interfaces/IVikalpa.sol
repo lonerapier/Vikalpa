@@ -13,7 +13,6 @@ interface IVikalpa {
     error ExerciseWindowTooShort(uint32, uint32);
     error EarlyLiquidation(uint256, uint40);
     error AlreadyLiquidated(uint256);
-    error SelfBuy();
 
     event NewOptionCreated(
         uint256 indexed optionId,
@@ -44,7 +43,8 @@ interface IVikalpa {
     event OptionBoughtFromWriter(
         address indexed buyer,
         address indexed writer,
-        uint256 indexed optionId,
+        uint256 indexed positionId,
+        uint256 optionId,
         uint256 amount
     );
 
