@@ -4,6 +4,8 @@
 
 Vikalpa is a vanilla **ERC1155** options protocol facilitating writing/buying covered calls and covered puts in European options. The contracts have been directly inspired and modified from [@0xAliciabedes's](https://twitter.com/0xAlcibiades) [Valorem Options Contracts](https://github.com/Alcibiades-Capital/valorem-options-contracts).
 
+> Note: This is not meant for any production use anywhere. Please check out [Valorem Options Contracts](https://github.com/Alcibiades-Capital/valorem-options-contracts) for any queries.
+ 
 ```bash
 /*
  * Will, it be a Call or Put, Anon? You decide.
